@@ -19,12 +19,30 @@ library(gtrendsR)
 library(tidyr)
 library(assertthat)
 library(stringr)
+library(jsonlite)
+
+## Set page variables
+#Read-in api key JSON file 'api_keys.json'
+#The file should contain a simple list with key names "semrush_api_key" and "google_lighthouse_api_key"
+#See the "api_keys_example.json" for a template
+attach(jsonlite::read_json("api_keys.json"))
+
+#Get US states name for column menu options
+data(state)
+
+
+## Create 'temp' directory if one does not exist
+if(!dir.exists("temp")){
+  dir.create("temp")
+  dir.create("temp/get")
+  dir.create("temp/greviews")
+}
 
 ## Create Python virtual environment
 reticulate::virtualenv_create(envname = "python_environment", python = "python3")
-reticulate::virtualenv_install(envname = "python_environment", packages = c("numpy","bs4","requests"), ignore_installed = TRUE)
+reticulate::virtualenv_install(envname = "python_environment", packages = c("pandas","numpy","bs4","requests"), ignore_installed = TRUE)
 reticulate::use_virtualenv("python_environment", required = TRUE)
-reticulate::source_python("webfonts.py")
+reticulate::source_python("Python/webfonts.py")
 
 ## Check if need to install PhantomJS
 if (!webshot::is_phantomjs_installed()) {
@@ -55,8 +73,11 @@ map48 = sf::st_read("data/contiguous48.shp")
 # saveRDS(centroids,"data/state_centroids.rds")
 centroids = readRDS("data/state_centroids.rds")
 
-## Load supporting functions in current working directory
-source("functions.R")
+
+## Load functions in current working directory
+src_files <- list.files("R/", full.names = TRUE)
+sapply(src_files, function(x) source(x))
+
 
 ## Create sidebar for app
 sidebar <- dashboardSidebar(
@@ -113,6 +134,9 @@ body <- dashboardBody(
   style = "height:100%;margin-left:1%;margin-right:1%;margin-top:0%",
   #changing theme
   shinyDashboardThemes(theme = "blue_gradient"),
+  fluidRow(tags$head(
+    tags$style(".shiny-output-error{color:blue; font-size: 17px}")
+  )),
   fluidRow(
     style = "height:1000px",
     tabBox(
@@ -123,242 +147,328 @@ body <- dashboardBody(
       height = "100%",
       width = "100%",
       #First Tab - Google SERP Results
-      tabPanel(
-        title = "Google Search",
-        fluidPage(
-          height = "100%",
-          h4("Google Search Egine"),
-          h5(
-            "Use the Google search engine to identify keywords, competitors, and other relevant information."
-          ),
-          textInput("query", "Enter Keywords"),
-          numericInput(
-            "num_results",
-            "Max. # of Results",
-            min = 1,
-            max = 20,
-            value = 10,
-            step = 1,
-            width = "8%"
-          ),
-          actionButton("search2", "Search Google", icon("refresh")),
-          h5(
-            "Get the top results from the Google search engine for any kewyword phrase. The table below will show the title, URL, and domain of top rated sites."
-          ),
-          br(),
-          br(),
-          dataTableOutput("SERP", width = "85%"),
-          br(),
-          br(),
-          h6(textOutput("serp_warnings"))
-        )
-      ),
+      tabPanel(title = "Google Search",
+               fluidPage(
+                 height = "100%",
+                 column(
+                   12,
+                   align = "center",
+                   h3(HTML("<b>Google Search Engine</b>")),
+                   h5(
+                     "Use the Google search engine to identify keywords, competitors, and other relevant information."
+                   ),
+                   splitLayout(
+                     cellWidths = c("25%","0%", "8%","0%"),
+                     textInput("query", "Enter Keywords"),
+                     tags$style(type="text/css", "#query {text-align:center}"),
+                     numericInput(
+                       "num_results",
+                       "Max. Results",
+                       min = 1,
+                       max = 20,
+                       value = 10,
+                       step = 1,
+                       width = "100%"
+                     ),
+                     tags$style(type="text/css", "#num_results {text-align:center}")
+                   ), 
+                   actionButton("search2", "Search Google", icon("refresh")),
+                   h5(
+                     "Get the top results from the Google search engine for any kewyword phrase. The table below will show the title, URL, and domain of top rated sites."
+                   ),
+                   br(),
+                   br(),
+                   dataTableOutput("SERP", width = "85%"),
+                   br(),
+                   br(),
+                   h6(textOutput("serp_warnings"))
+                 )
+               )),
       #Second Tab - Google Trends
+      tabPanel(title = "Google Trends",
+               fluidPage(
+                 height = "100%",
+                 column(
+                   12,
+                   align = "center",
+                   h3(HTML("<b>Google Trends</b>")),
+                   h5(
+                     "Download the latest results from Google Trends. Create data visualizations of keyword trends over time and geographic analysis of results."
+                   ),
+                   br(),
+                   h5(HTML("<b>Enter keyword(s)</b>")),
+                   textInputRow(
+                     inputId = "keyword1",
+                     label = "",
+                     value = ""
+                   ),
+                   textInputRow(
+                     inputId = "keyword2",
+                     label = "",
+                     value = ""
+                   ),
+                   textInputRow(
+                     inputId = "keyword3",
+                     label = "",
+                     value = ""
+                   ),
+                   textInputRow(
+                     inputId = "keyword4",
+                     label = "",
+                     value = ""
+                   ),
+                   textInputRow(
+                     inputId = "keyword5",
+                     label = "",
+                     value = ""
+                   ),
+                   br(),
+                   br(),
+                   selectInput(
+                     inputId = "country",
+                     label = "Select geographic interest(s)",
+                     choices = codes$label,
+                     multiple = TRUE,
+                     selected = "United States",
+                     width = "25%"
+                   ),
+                   sliderInput(
+                     "from.",
+                     "How many prior months for comparisons?: ",
+                     0,
+                     60,
+                     12,
+                     1,
+                     round = 0,
+                     width = "25%"
+                   ),
+                   actionButton("submit_gt", "Get Trends", icon = icon("refresh")),
+                   br(),
+                   br(),
+                   downloadButton("dl_gtrends1", label = "Save Plot1.pdf"),
+                   downloadButton("dl_gtrends2", label = "Save Plot2.pdf"),
+                   downloadButton("dl_gtrends3", label = "Save Plot3.pdf"),
+                   plotOutput("gtrends_plots", height = "1000px")
+                 )
+               )),
+      #Third Tab - Google Business Reviews
       tabPanel(
-        title = "Google Trends",
+        # addClass(selector = "body", class = "sidebar-collapse"),
+        title = "Google Business Reviews",
         fluidPage(
-          height = "100%",
-          h4("Google Search Egine"),
-          h5(
-            "Download the latest results from Google Trends. Create data visualizations of keyword trends over time and geographic analysis of results."
+          column(12, align='center',
+                 h3(HTML("<b>Google Business Reviews Analytics</b>")),
+                 h5(
+                   "Query the DataForSEO database to retrieve tabulated reports of the content of Google Business Reviews, including user information, text, and user rating. Report requests may take several minutes to process and complete. All entries are case-sensitive."
+                 ),
+                 br(),
+                 splitLayout(
+                   tags$head(tags$style(
+                     HTML("
+                 .shiny-split-layout > div {
+                 overflow: visible;
+                 text-align:center;
+                 }
+                 ")
+                   )),
+                   cellWidths = c("0%","20%","0%", "12%","0%", "12%", "7.5%","3%","0%"),
+                   textInput(inputId = "dfseo_keyword", "Business Name", placeholder = "TIV Branding"), 
+                   tags$style(type="text/css", "#dfseo_keyword {text-align:center}"),
+                   textInput(inputId = "dfseo_city", "Location - City", placeholder = "Santa Rosa"),
+                   tags$style(type="text/css", "#dfseo_city {text-align:center}"),
+                   selectInput(inputId = "dfseo_state", "Location - State", choices = state.name, selected = "California"), 
+                   numericInput(
+                     "dfseo_depth",
+                     label = "Max. Results",
+                     min = 10,
+                     max = 1000,
+                     value = 50,
+                     step = 10
+                   ),
+                   tags$style(type="text/css", "#dfseo_depth {text-align:center}")
+                 ),
+                 actionButton("dfseo_submit", "Request", width = "10%", icon("bar-chart-o"))
           ),
           br(),
-          h5(HTML("<b>Enter keyword(s)</b>")),
-          textInputRow(
-            inputId = "keyword1",
-            label = "",
-            value = ""
-          ),
-          textInputRow(
-            inputId = "keyword2",
-            label = "",
-            value = ""
-          ),
-          textInputRow(
-            inputId = "keyword3",
-            label = "",
-            value = ""
-          ),
-          textInputRow(
-            inputId = "keyword4",
-            label = "",
-            value = ""
-          ),
-          textInputRow(
-            inputId = "keyword5",
-            label = "",
-            value = ""
-          ),
           br(),
           br(),
-          selectInput(
-            inputId = "country",
-            label = "Select geographic interest",
-            choices = codes$label,
-            multiple = TRUE,
-            selected = "United States",
-            width = "15%"
-          ),
-          sliderInput(
-            "from.",
-            "How many prior months for comparisons?: ",
-            0,
-            60,
-            12,
-            1,
-            round = 0,
-            width = "15%"
-          ),
-          actionButton("submit_gt", "Get Trends", icon = icon("refresh")),
           br(),
-          br(),
-          downloadButton("dl_gtrends1", label = "Save Plot1.pdf"),
-          downloadButton("dl_gtrends2", label = "Save Plot2.pdf"),
-          downloadButton("dl_gtrends3", label = "Save Plot3.pdf"),
-          plotOutput("gtrends_plots", height = "1000px")
-        )
-      ),
-      #Third Tab - Wordcloud and Text Valence
-      tabPanel(
-        title = "Text Analysis",
-        fluidPage(
-          h4("Word Cloud and Text Sentiment"),
-          height = "100%",
-          h4(textOutput("TextTitle")),
-          h5(
-            "Analyze the word content from the landing pages of each site domain appearing in the sidebar. Change the 'seed' value to generate different worldcloud placement and rotations."
-          ),
-          br(),
-          splitLayout(
-            cellWidths = c("12%", "7%", "7%", "7%"),
-            sliderInput(
-              "min_freq",
-              "Min. Word Frequency",
-              min = 1,
-              max = 10,
-              value = 3,
-              step = 1
-            ),
-            br(),
-            numericInput(
-              "scale_min",
-              label = "Min. Word Size",
-              min = 0.3,
-              max = 3,
-              value = 0.7,
-              step = 0.1
-            ),
-            numericInput(
-              "scale_max",
-              label =  "Max. Word Size",
-              min = 5,
-              max = 15,
-              value = 8,
-              step = 0.5
-            ),
-            br(),
-            numericInput(
-              "seed",
-              "Set Seed",
-              value = 123,
-              min = 0,
-              max = Inf
+          fluidRow(
+            column(12, align="center",
+                   plotOutput(
+                     "dfseo_plots"#, width = "auto", height = "auto"
+                   ),
+                   br(),
+                   downloadButton("dl_dfseo_plots", "Save .pdf")
             )
           ),
-          actionButton("submit_ta", "Analyze", width = "10%", icon("bar-chart-o")),
-          h6(plotOutput(
-            "WordCloud", width = "auto", height = "auto"
-          )),
-          downloadButton("dl_wordcloud", "Save as .pdf"),
-          h6(plotOutput(
-            "Valence", width = "auto", height = "auto"
-          )),
-          downloadButton("dl_textvalence", "Save as .pdf"),
+          fluidRow(
+            column(12, align="center",
+                   dataTableOutput(
+                     "dfseo_table", width = "85%", height = "auto"
+                   ),
+                   br(),
+                   downloadButton("dl_dfseo_table", "Save .csv")
+            )
+          ),
           br()
         )
       ),
-      #Fourth Tab - Website Colors
-      tabPanel(
-        "Website Color Palettes",
-        fluidPage(
-          height = "100%",
-          h4("Website Color Analysis"),
-          h5(
-            "Isloate the color palettes from the landing pages of each site domain appearing in the sidebar\n. This operation may be slow initially, but website images will be cached for up to seven days to speed up repeated use of the same domains."
-          ),
-          splitLayout(
-            cellWidths = c("10%", "10%"),
-            selectInput(
-              "num_colors",
-              label = "Number of Colors",
-              choices = c(2:5),
-              selectize = FALSE,
-              size = 1,
-              width = "95%"
-            ),
-            selectInput(
-              "zoom",
-              label =  "Webshot Resolution",
-              choices = c("Low", "Medium", "High"),
-              width = "95%",
-              selectize = FALSE,
-              size = 1
-            )
-          ),
-          checkboxInput(
-            "color_names",
-            label = HTML("<b>Use Color Names</b>"),
-            value = FALSE,
-            width = "15%"
-          ),
-          actionButton("submit_wc", "Analyze", width = "10%", icon("bar-chart-o")),
-          br(),
-          br(),
-          plotOutput("Webcolors", width = "auto", height = "auto"),
-          downloadButton("dl_webcolors", "Save as .pdf"),
-          downloadButton("dl_webshots", "Save Webshots")
-        )
-      ),
-      #Fifth Tab - Fonts
-      tabPanel(
-        "Website Fonts",
-        "",
-        fluidPage(
-          height = "100%",
-          h4("Website Font Analysis"),
-          h5(
-            "Search webpage HTML and CSS coding for font specificiations. If found, they will displayed in the table appearing below."
-          ),
-          actionButton(
-            "submit_wf",
-            "Get Fonts",
-            width = "10%",
-            icon = icon("refresh")
-          ),
-          br(),
-          br(),
-          dataTableOutput("Webfonts", width = "85%")
-        )
-      ),
-      #Sixth Tab - Header Tags
-      tabPanel(
-        #   fluidPage(height="100%",
-        h4("View Page Header Tags"),
-        title = "Page Header Tags",
-        "",
-        h5(
-          "Gather the page header text from the landing pages of each site domain appearing in the sidebar."
-        ),
-        actionButton(
-          "submit_ht",
-          "Get Headers",
-          width = "10%",
-          icon = icon("refresh")
-        ),
-        h4(textOutput("PageHeaderTagsTitle")),
-        h6(tableOutput("Htags"))
-        # )
-      )
+      #Fourth Tab - Wordcloud and Text Valence
+      tabPanel(title = "Text Analysis",
+               fluidPage(
+                 column(
+                   12,
+                   align = "center",
+                   h3(HTML("<b>Word Cloud and Text Sentiment</b>")),
+                   height = "100%",
+                   h4(textOutput("TextTitle")),
+                   h5(
+                     "Analyze the word content from the landing pages of each site domain appearing in the sidebar. Change the 'seed' value to generate different worldcloud placement and rotations."
+                   ),
+                   br(),
+                   splitLayout(
+                     cellWidths = c("15%","1.5%","10%","0%","10%","0%","10%","0%"),
+                     sliderInput(
+                       "min_freq",
+                       "Min. Word Frequency",
+                       min = 1,
+                       max = 10,
+                       value = 3,
+                       step = 1
+                     ),
+                     br(),
+                     numericInput(
+                       "scale_min",
+                       label = "Min. Word Size",
+                       min = 0.3,
+                       max = 3,
+                       value = 0.7,
+                       step = 0.1
+                     ),
+                     tags$style(type="text/css", "#scale_min {text-align:center}"),
+                     numericInput(
+                       "scale_max",
+                       label =  "Max. Word Size",
+                       min = 5,
+                       max = 15,
+                       value = 8,
+                       step = 0.5
+                     ),
+                     tags$style(type="text/css", "#scale_max {text-align:center}"),
+                     numericInput(
+                       "seed",
+                       "Set Seed",
+                       value = 123,
+                       min = 0,
+                       max = Inf
+                     ),
+                     tags$style(type="text/css", "#seed {text-align:center}")
+                   ),
+                   actionButton("submit_ta", "Analyze", width = "10%", icon("bar-chart-o")),
+                   h6(plotOutput(
+                     "WordCloud", width = "auto", height = "auto"
+                   )),
+                   downloadButton("dl_wordcloud", "Save as .pdf"),
+                   h6(plotOutput(
+                     "Valence", width = "auto", height = "auto"
+                   )),
+                   downloadButton("dl_textvalence", "Save as .pdf"),
+                   br()
+                 )
+               )),
+      #Fifth Tab - Website Colors
+      tabPanel("Website Color Palettes",
+               fluidPage(
+                 height = "100%",
+                 column(
+                   12,
+                   align = "center",
+                   h3(HTML("<b>Website Color Analysis</b>")),
+                   h5(
+                     "Isloate the color palettes from the landing pages of each site domain appearing in the sidebar\n. This operation may be slow initially, but website images will be cached for up to seven days to speed up repeated use of the same domains."
+                   ),
+                   splitLayout(
+                     cellWidths = c("7%", "0%", "15%", "0%"),
+                     selectInput(
+                       "num_colors",
+                       label = "# Colors",
+                       choices = c(2:5),
+                       selectize = FALSE,
+                       size = 1,
+                       width = "95%"
+                     ),
+                     tags$style(type="text/css", "#num_colors {text-align:center}"),
+                     selectInput(
+                       "zoom",
+                       label =  "Webshot Resolution",
+                       choices = c("Low", "Medium", "High"),
+                       width = "95%",
+                       selectize = FALSE,
+                       size = 1
+                     ),
+                     tags$style(type="text/css", "#zoom {text-align:center}")
+                   ),
+                   checkboxInput(
+                     "color_names",
+                     label = HTML("<b>Use Color Names</b>"),
+                     value = FALSE,
+                     width = "15%"
+                   ),
+                   actionButton("submit_wc", "Analyze", width = "10%", icon("bar-chart-o")),
+                   br(),
+                   br(),
+                   plotOutput("Webcolors", width = "auto", height = "auto"),
+                   downloadButton("dl_webcolors", "Save as .pdf"),
+                   downloadButton("dl_webshots", "Save Webshots")
+                 )
+               )),
+      #Sixth Tab - Fonts
+      tabPanel("Website Fonts",
+               "",
+               fluidPage(
+                 height = "100%",
+                 column(
+                   12,
+                   align = "center",
+                   h3(HTML("<b>Website Font Analysis</b>")),
+                   h4(""),
+                   h5(
+                     "Search webpage HTML and CSS coding for font specificiations. If found, they will displayed in the table appearing below."
+                   ),
+                   actionButton(
+                     "submit_wf",
+                     "Get Fonts",
+                     width = "10%",
+                     icon = icon("refresh")
+                   ),
+                   br(),
+                   br(),
+                   dataTableOutput("Webfonts", width = "85%")
+                 )
+               )),
+      #Seventh Tab - Header Tags
+      tabPanel(title = "Page Header Tags",
+               "",
+               fluidPage(
+                 column(
+                   12,
+                   align = "center",
+                   height = "100%",
+                   h3(HTML("<b>Page Header Tags</b>")),
+                   h5(
+                     "Gather the page header text from the landing pages of each site domain appearing in the sidebar."
+                   ),
+                   actionButton(
+                     "submit_ht",
+                     "Get Headers",
+                     width = "13%",
+                     icon = icon("refresh")
+                   ),
+                   h4(textOutput("PageHeaderTagsTitle")),
+                   h6(tableOutput("Htags"))
+                 )
+               ))
     )
   ),
   fluidRow(infoBoxOutput("tabset1Selected"))
@@ -366,18 +476,17 @@ body <- dashboardBody(
 
 ## UI
 ui = dashboardPage(dashboardHeader(title = "Brand Research Tools", titleWidth =
-                                     300),
+                                     298),
                    sidebar,
                    body)
 
 ## Server logic
 server = function(input, output, session) {
-  
   #Function that returns the number of sites (URLs) entered in the sidebar
   N_sites <- function() {
     urls = input_urls(input)
     if (length(urls) < 1) {
-      validate(FALSE, "You must enter atleast one valid URL.")
+      shiny::validate(FALSE, "You must enter atleast one valid URL.")
     }
     return(length(urls))
     
@@ -388,7 +497,7 @@ server = function(input, output, session) {
     #Iterate over websites
     urls = input_urls(input)
     if (length(urls) < 1) {
-      validate(FALSE, "You must enter atleast one valid URL.")
+      shiny::validate(FALSE, "You must enter atleast one valid URL.")
     }
     
     progress <-
@@ -458,7 +567,7 @@ server = function(input, output, session) {
     #Iterate over websites
     urls = input_urls(input)
     if (length(urls) < 1) {
-      validate(FALSE, "You must enter atleast one valid URL.")
+      shiny::validate(FALSE, "You must enter atleast one valid URL.")
     }
     #check for transfer protocol prefix
     l <-
@@ -560,7 +669,7 @@ server = function(input, output, session) {
     #Iterate over websites
     urls = input_urls(input)
     if (length(urls) < 1) {
-      validate(FALSE, "You must enter atleast one valid URL.")
+      shiny::validate(FALSE, "You must enter atleast one valid URL.")
     }
     
     progress$set(value = 2)
@@ -589,7 +698,7 @@ server = function(input, output, session) {
     #Iterate over websites
     urls = input_urls(input)
     if (length(urls) < 1) {
-      validate(FALSE, "You must enter atleast one valid URL.")
+      shiny::validate(FALSE, "You must enter atleast one valid URL.")
     }
     
     progress$set(value = 2)
@@ -726,7 +835,7 @@ server = function(input, output, session) {
   #Google SERP Display Reactive Function
   google_serp_out <- eventReactive(input$search2, {
     if (input$query == "") {
-      validate(FALSE, "Error: your search query must not be empty.")
+      shiny::validate(FALSE, "Error: your search query must not be empty.")
     }
     
     progress <- Progress$new(session, min = 1, max = 3)
@@ -781,11 +890,11 @@ server = function(input, output, session) {
     
     #Check that there is atleast one keyword phrase
     if (length(kws) < 1) {
-      validate(FALSE, "You must enter atleast one keyword phrase.")
+      shiny::validate(FALSE, "You must enter atleast one keyword phrase.")
     }
     #Check that there is atleast one country selected for geographic interest
     if (length(input$country) == 0) {
-      validate(FALSE, "You must select one country of interest.")
+      shiny::validate(FALSE, "You must select one country of interest.")
     }
     
     #query = c("occidental tool belt","leather tool belt","diamondback tool belt","klein tool belt","atlas 46 tool belt")
@@ -818,7 +927,7 @@ server = function(input, output, session) {
       g$interest_over_time) %>%
       do.call("rbind", .)
     if (is.null(g)) {
-      validate(
+      shiny::validate(
         FALSE,
         "Google Trends: No data returned. Try a different keyword phrase or geographic origin."
       )
@@ -829,7 +938,7 @@ server = function(input, output, session) {
     if (any(totalHitsByCountry == 0)) {
       #logical vector indicating which rows to keep (FALSE) or remove (TRUE)
       countriesToRemove <- names(which(totalHitsByCountry == 0))
-      g <- g[!g$geo %in% countriesToRemove,]
+      g <- g[!g$geo %in% countriesToRemove, ]
     }
     #After filtering, how many unique geo IDs remaining?
     n_unique_geo <- length(unique(g$geo))
@@ -882,7 +991,7 @@ server = function(input, output, session) {
           )
       )
       
-      g = g[order(g$keyword),] %>%
+      g = g[order(g$keyword), ] %>%
         as_tibble
       g$cumsum_hits = with(g, tapply(hits, list(keyword), cumsum)) %>%
         unlist
@@ -955,7 +1064,7 @@ server = function(input, output, session) {
           facet_grid(country ~ ., switch = "y")
       )
       
-      g = g[order(g$geo, g$keyword),] %>%
+      g = g[order(g$geo, g$keyword), ] %>%
         as_tibble
       g$cumsum_hits = with(g, tapply(hits, list(keyword, geo), cumsum)) %>%
         unlist
@@ -1085,6 +1194,104 @@ server = function(input, output, session) {
   #Google Trends Plotting Reactive
   gtrends_out = eventReactive(input$submit_gt, gtrends_fun())
   
+  #Google Business Reviews Function
+  google_reviews_fun <- function(){
+    
+    if(file.exists("temp/greviews/greviews_data.rds")){
+      file.remove("temp/greviews/greviews_data.rds")
+    }
+    
+    progress <- Progress$new(session, min=1, max=3)
+    on.exit(progress$close())
+    progress$set(message = '1) POST Request',
+                 detail = 'Sending customized task request to API server.')
+    progress$set(value = 1)
+    
+    progress$set(message = '2) GET Request',
+                 detail = 'Waiting for response to task request. This may take several minutes.')
+    progress$set(value = 2)
+    
+    report <-
+      dataforseo_google_reviews(
+        keyword = input$dfseo_keyword,
+        city = input$dfseo_city,
+        state = input$dfseo_state,
+        depth = input$dfseo_depth,
+        usn = dataforseo$usn,
+        passw = dataforseo$passw
+      )
+    
+    progress$set(message = '3) Data Received',
+                 detail = 'Preparing visulizations.')
+    progress$set(value = 3)
+    
+    
+    p1 <- ggplotify::as.grob(report$hist_plot)
+    p2 <- ggplotify::as.grob(report$trend_plot)
+    d <- report$data
+    
+    #draw all plots
+    grobs <-
+      gridExtra::arrangeGrob(
+        grobs = list(
+          p1,
+          p2
+        ),
+        ncol = 2
+      )
+    
+    pdf("temp/greviews/greviews_plot1.pdf")
+    grid::grid.newpage()
+    grid::grid.draw(p1)
+    grid::grid.text(
+      sprintf("Source: Data4SEO - %s", as.Date(Sys.time())),
+      x = unit(0.8, "npc"),
+      y = unit(0.025, "npc")
+    )
+    dev.off()
+    
+    pdf("temp/greviews/greviews_plot2.pdf")
+    grid::grid.newpage()
+    grid::grid.draw(p2)
+    grid::grid.text(
+      sprintf("Source: Data4SEO - %s", as.Date(Sys.time())),
+      x = unit(0.8, "npc"),
+      y = unit(0.025, "npc")
+    )
+    dev.off()
+    
+    saveRDS(report, "temp/greviews/greviews_data.rds")
+    
+    grid::grid.newpage()
+    grid::grid.draw(grobs)
+    
+  }
+  
+  
+  #Google Reviews Plotting Reactive
+  google_reviews_plots = eventReactive(input$dfseo_submit, google_reviews_fun())
+  
+  #Google Business Reviews - plots
+  output$dfseo_plots <-
+    renderPlot(google_reviews_plots(), width = 850)
+  
+  #Google Reviews Table Reactive
+  google_reviews_table = eventReactive(input$dfseo_submit, {
+    tab = readRDS("temp/greviews/greviews_data.rds")
+    return(tab$data)
+  })
+  
+  #Google Business Reviews - table
+  output$dfseo_table <- DT::renderDataTable({
+    google_reviews_table()
+  }, rownames = FALSE, escape = FALSE, options = list(
+    scrollX = TRUE,
+    scrollCollapse = TRUE,
+    lengthMenu = list(c(10, 20, -1), c('10','20', 'All')),
+    pageLength = 10
+  ))
+  
+  
   ## Render plots and tables for display
   #Wordcloud plots
   output$WordCloud <- renderPlot({
@@ -1123,7 +1330,7 @@ server = function(input, output, session) {
   output$SERP <-
     DT::renderDataTable({
       google_serp_out()
-    }, rownames = FALSE, escape = FALSE, options = list(lengthMenu = list(c(10, -1), c('10', 'All')),
+    }, rownames = FALSE, escape = FALSE, options = list(lengthMenu = list(c(10,-1), c('10', 'All')),
                                                         pageLength = -1))
   #-create warning for SERP display page
   output$serp_warnings <-
@@ -1143,6 +1350,7 @@ server = function(input, output, session) {
     renderPlot(gtrends_out(),
                width = 1000,
                height = 800)
+  
   
   ## Export saved plots and data
   output$dl_wordcloud <- downloadHandler(
@@ -1230,6 +1438,20 @@ server = function(input, output, session) {
       plot(ras)
       dev.off()
     }
+  )
+  
+  #Download google reviews plots
+  output$dl_dfseo_plots <- downloadHandler(
+    filename = 'google_reviews_fig.zip',
+    content = function(file) {
+      #location of temp file for website screenshot
+      fs = list.files("temp/greviews/", pattern = ".pdf", full.names = TRUE)
+      zip(zipfile = file, files = fs)
+      if (file.exists(paste0(file, ".zip"))) {
+        file.rename(paste0(file, ".zip"), file)
+      }
+    },
+    contentType = "application/zip"
   )
   
 }
